@@ -7,10 +7,17 @@
 
 #define PERSIST_RAW 1
 #define RAW_MAX PERSIST_DATA_MAX_LENGTH
+#if defined(PBL_ROUND)
+#define PAGE_COUNT 5
+#else
+#define PAGE_COUNT 3
+#endif
 
 static const char *HF_NAMES[] = {"80m-40m", "30m-20m", "17m-15m", "12m-10m"};
 static const char *VHF_NAMES[] = {"Aurora", "Es Europe", "Es N.Am", "Es EU 6m", "Es EU 4m"};
+#if !defined(PBL_ROUND)
 static const char *PAGE_TITLES[] = {"HF Conditions", "Solar Data", "VHF Conditions"};
+#endif
 
 typedef struct {
   char updated[40];
@@ -52,6 +59,10 @@ static time_t s_asked;
 static GFont s_font14;
 static GFont s_font14b;
 static GFont s_font18b;
+#if defined(PBL_ROUND)
+static GFont s_font24b;
+static GFont s_font28b;
+#endif
 
 static void request_refresh(bool force);
 static void schedule_retry(void);
@@ -276,6 +287,7 @@ static void draw_field(GContext *ctx, const char *label, const char *value, GCol
   draw_text(ctx, shown, s_font14b, color, value_x, y, value_w, 18, GTextAlignmentRight);
 }
 
+#if !defined(PBL_ROUND)
 static void draw_pair(GContext *ctx, const char *label, const char *value, GColor color,
                       int x, int y) {
   draw_text(ctx, label, s_font14b, GColorWhite, x, y + 3, 36, 18, GTextAlignmentLeft);
@@ -428,11 +440,266 @@ static void draw_vhf(GContext *ctx, GRect bounds) {
     draw_cell(ctx, s_solar.vhf[i], pill_x, y, pill_w, cell_h);
   }
 }
+#endif
+
+#if defined(PBL_ROUND)
+static const char *ROUND_TITLES[] = {
+  "Indices", "HF Conditions", "Solar", "Field", "VHF"
+};
+
+static int isqrt(int n) {
+  if (n <= 0) {
+    return 0;
+  }
+  int x = n;
+  int y = (x + 1) / 2;
+  while (y < x) {
+    x = y;
+    y = (x + n / x) / 2;
+  }
+  return x;
+}
+
+static int row_span(GRect bounds, int y, int h, int margin, int *out_x) {
+  int r = bounds.size.w / 2;
+  int cy = bounds.size.h / 2;
+  int top = y - cy;
+  int bot = y + h - 1 - cy;
+  if (top < 0) {
+    top = -top;
+  }
+  if (bot < 0) {
+    bot = -bot;
+  }
+  int d = top > bot ? top : bot;
+  if (d >= r) {
+    *out_x = r;
+    return 0;
+  }
+  int half = isqrt(r * r - d * d) - margin;
+  if (half < 8) {
+    *out_x = r;
+    return 0;
+  }
+  *out_x = r - half;
+  return half * 2;
+}
+
+static int ry(GRect bounds, int px) {
+  return bounds.size.h * px / 260;
+}
+
+static void draw_round_date(GContext *ctx, GRect bounds, int y) {
+  int x;
+  int w = row_span(bounds, y, 18, 4, &x);
+  if (w < 20) {
+    return;
+  }
+  draw_text(ctx, s_solar.updated, s_font14, GColorYellow, x, y, w, 18, GTextAlignmentCenter);
+}
+
+static void draw_round_title(GContext *ctx, GRect bounds, const char *title, int y) {
+  int x;
+  int w = row_span(bounds, y, 20, 4, &x);
+  draw_text(ctx, title, s_font14b, GColorYellow, x, y, w, 20, GTextAlignmentCenter);
+}
+
+static void draw_round_big(GContext *ctx, const char *label, const char *value, GColor color,
+                           GFont value_font, int x, int y, int w) {
+  const char *shown = (value && value[0]) ? value : "--";
+  draw_text(ctx, label, s_font14b, GColorWhite, x, y, w, 18, GTextAlignmentCenter);
+  draw_text(ctx, shown, value_font, color, x, y + 16, w, 34, GTextAlignmentCenter);
+}
+
+static void draw_round_pair(GContext *ctx, GRect bounds, int y,
+                            const char *l, const char *lv, GColor lc,
+                            const char *r, const char *rv, GColor rc) {
+  int x;
+  int w = row_span(bounds, y, 22, 14, &x);
+  int gap = 10;
+  int col = (w - gap) / 2;
+  draw_field(ctx, l, lv, lc, x, y, col);
+  draw_field(ctx, r, rv, rc, x + col + gap, y, col);
+}
+
+static void draw_round_chrome(GContext *ctx, GRect bounds) {
+  int dot = 5;
+  int dots_w = PAGE_COUNT * dot + (PAGE_COUNT - 1) * 4;
+  int dx = (bounds.size.w - dots_w) / 2;
+  int dy = ry(bounds, 204);
+  for (int i = 0; i < PAGE_COUNT; i++) {
+    graphics_context_set_fill_color(ctx, i == s_page ? GColorYellow : GColorLightGray);
+    graphics_fill_rect(ctx, GRect(dx, dy, dot, dot), 0, GCornerNone);
+    dx += dot + 4;
+  }
+  bool noaa = strcmp(s_solar.source, "NOAA") == 0;
+  const char *credit = noaa ? "NOAA" : "AC1RV";
+  const char *brand = noaa ? "AC1RV" : "NOAA";
+  int y = ry(bounds, 218);
+  int x;
+  int w = row_span(bounds, y, 18, 8, &x);
+  int mid = x + w / 2;
+  draw_text(ctx, credit, s_font14, GColorLightGray, x, y, w / 2 - 6, 18, GTextAlignmentRight);
+  draw_text(ctx, brand, s_font14, GColorLightGray, mid + 6, y, w / 2 - 6, 18, GTextAlignmentLeft);
+}
+
+static void draw_round_loading(GContext *ctx, GRect bounds) {
+  draw_round_title(ctx, bounds, ROUND_TITLES[s_page], ry(bounds, 78));
+  int x;
+  int y = ry(bounds, 104);
+  int w = row_span(bounds, y, 18, 8, &x);
+  draw_text(ctx, s_status, s_font14, GColorWhite, x, y, w, 18, GTextAlignmentCenter);
+  y = ry(bounds, 132);
+  w = row_span(bounds, y, 14, 28, &x);
+  graphics_context_set_fill_color(ctx, GColorDarkGray);
+  graphics_fill_rect(ctx, GRect(x, y, w, 14), 0, GCornerNone);
+  int fill = (w * (s_bar_frame + 1)) / 16;
+  if (fill < 8) {
+    fill = 8;
+  }
+  graphics_context_set_fill_color(ctx, GColorYellow);
+  graphics_fill_rect(ctx, GRect(x, y, fill, 14), 0, GCornerNone);
+  y = ry(bounds, 158);
+  w = row_span(bounds, y, 18, 8, &x);
+  draw_text(ctx, "UP / DOWN  pages", s_font14, GColorLightGray, x, y, w, 18, GTextAlignmentCenter);
+  y = ry(bounds, 178);
+  w = row_span(bounds, y, 18, 8, &x);
+  draw_text(ctx, "SELECT  refresh", s_font14, GColorLightGray, x, y, w, 18, GTextAlignmentCenter);
+}
+
+static void draw_round_glance(GContext *ctx, GRect bounds) {
+  draw_round_date(ctx, bounds, ry(bounds, 28));
+  int y = ry(bounds, 58);
+  int x;
+  int w = row_span(bounds, y, 50, 22, &x);
+  int gap = 8;
+  int col = (w - gap) / 2;
+  draw_round_big(ctx, "SFI", s_solar.sfi, num_color(s_solar.sfi, 100, 70, true), s_font28b, x, y, col);
+  draw_round_big(ctx, "SN", s_solar.sn, num_color(s_solar.sn, 100, 30, true), s_font28b, x + col + gap, y, col);
+  y = ry(bounds, 118);
+  w = row_span(bounds, y, 50, 22, &x);
+  col = (w - gap) / 2;
+  draw_round_big(ctx, "A", s_solar.a, num_color(s_solar.a, 10, 20, false), s_font28b, x, y, col);
+  draw_round_big(ctx, "K", s_solar.k, k_color(s_solar.k), s_font28b, x + col + gap, y, col);
+}
+
+static void draw_round_hf(GContext *ctx, GRect bounds) {
+  draw_round_title(ctx, bounds, "HF Conditions", ry(bounds, 16));
+  draw_round_date(ctx, bounds, ry(bounds, 34));
+  int top = ry(bounds, 72);
+  int row_h = ry(bounds, 30);
+  int cell_h = ry(bounds, 24);
+  int gap = 4;
+  int x;
+  int w = row_span(bounds, top, cell_h, 10, &x);
+  int name_w = w * 40 / 100;
+  int cell_w = (w - name_w - gap * 2) / 2;
+  int day_x = x + name_w + gap;
+  int night_x = day_x + cell_w + gap;
+  draw_text(ctx, "Day", s_font14b, GColorYellow, day_x, top - 16, cell_w, 16, GTextAlignmentCenter);
+  draw_text(ctx, "Night", s_font14b, GColorYellow, night_x, top - 16, cell_w, 16, GTextAlignmentCenter);
+  for (int i = 0; i < 4; i++) {
+    int y = top + i * row_h;
+    w = row_span(bounds, y, cell_h, 10, &x);
+    name_w = w * 40 / 100;
+    cell_w = (w - name_w - gap * 2) / 2;
+    day_x = x + name_w + gap;
+    night_x = day_x + cell_w + gap;
+    draw_text(ctx, HF_NAMES[i], s_font14, GColorWhite, x, y + (cell_h - 16) / 2, name_w, 18,
+              GTextAlignmentLeft);
+    draw_cell(ctx, s_solar.day[i], day_x, y, cell_w, cell_h);
+    draw_cell(ctx, s_solar.night[i], night_x, y, cell_w, cell_h);
+  }
+}
+
+static void draw_round_solar(GContext *ctx, GRect bounds) {
+  draw_round_title(ctx, bounds, "Solar", ry(bounds, 18));
+  draw_round_date(ctx, bounds, ry(bounds, 36));
+  int y = ry(bounds, 64);
+  int step = ry(bounds, 32);
+  draw_round_pair(ctx, bounds, y, "X-Ray", s_solar.xray, xray_color(s_solar.xray),
+                  "304A", s_solar.helium, num_color(s_solar.helium, 100, 80, true));
+  y += step;
+  draw_round_pair(ctx, bounds, y, "Ptn Flx", s_solar.proton, num_color(s_solar.proton, 100, 1000, false),
+                  "Elc Flx", s_solar.electron, num_color(s_solar.electron, 100, 1000, false));
+  y += step;
+  draw_round_pair(ctx, bounds, y, "Aurora", s_solar.aurora, num_color(s_solar.aurora, 6, 8, false),
+                  "n", s_solar.norm, n_color(s_solar.norm));
+  y += step;
+  draw_round_pair(ctx, bounds, y, "Aur Lat", s_solar.lat, GColorWhite,
+                  "MUF", s_solar.muf, GColorWhite);
+}
+
+static void draw_round_field(GContext *ctx, GRect bounds) {
+  draw_round_title(ctx, bounds, "Field", ry(bounds, 16));
+  draw_round_date(ctx, bounds, ry(bounds, 34));
+  int y = ry(bounds, 58);
+  int x;
+  int w = row_span(bounds, y, 48, 20, &x);
+  int gap = 8;
+  int col = (w - gap) / 2;
+  draw_round_big(ctx, "Wind", s_solar.wind, num_color(s_solar.wind, 500, 700, false), s_font24b, x, y, col);
+  draw_round_big(ctx, "Bz", s_solar.bz, num_color(s_solar.bz, 0, -5, true), s_font24b, x + col + gap, y, col);
+
+  y = ry(bounds, 112);
+  w = row_span(bounds, y, 18, 16, &x);
+  draw_text(ctx, "GeoMag", s_font14, GColorWhite, x, y, w, 18, GTextAlignmentCenter);
+  y = ry(bounds, 128);
+  w = row_span(bounds, y, 28, 16, &x);
+  draw_text(ctx, (s_solar.geomag[0] ? s_solar.geomag : "--"), s_font24b, geomag_color(s_solar.geomag),
+            x, y, w, 28, GTextAlignmentCenter);
+
+  y = ry(bounds, 156);
+  w = row_span(bounds, y, 18, 16, &x);
+  draw_text(ctx, "Sig Noise", s_font14, GColorWhite, x, y, w, 18, GTextAlignmentCenter);
+  y = ry(bounds, 172);
+  w = row_span(bounds, y, 24, 16, &x);
+  draw_text(ctx, (s_solar.noise[0] ? s_solar.noise : "--"), s_font24b, noise_color(s_solar.noise),
+            x, y, w, 24, GTextAlignmentCenter);
+}
+
+static void draw_round_vhf(GContext *ctx, GRect bounds) {
+  draw_round_title(ctx, bounds, "VHF Conditions", ry(bounds, 16));
+  draw_round_date(ctx, bounds, ry(bounds, 34));
+  int top = ry(bounds, 62);
+  int row_h = ry(bounds, 26);
+  int cell_h = ry(bounds, 22);
+  for (int i = 0; i < 5; i++) {
+    int y = top + i * row_h;
+    int x;
+    int w = row_span(bounds, y, cell_h, 12, &x);
+    int pill_w = w * 38 / 100;
+    if (pill_w < 64) {
+      pill_w = 64;
+    }
+    int name_w = w - pill_w - 6;
+    draw_text(ctx, VHF_NAMES[i], s_font14, GColorWhite, x, y + (cell_h - 16) / 2, name_w, 18,
+              GTextAlignmentLeft);
+    draw_cell(ctx, s_solar.vhf[i], x + name_w + 6, y, pill_w, cell_h);
+  }
+}
+#endif
 
 static void draw_canvas(Layer *layer, GContext *ctx) {
   GRect bounds = layer_get_bounds(layer);
   graphics_context_set_fill_color(ctx, GColorBlack);
   graphics_fill_rect(ctx, bounds, 0, GCornerNone);
+#if defined(PBL_ROUND)
+  if (!s_solar.have) {
+    draw_round_loading(ctx, bounds);
+  } else if (s_page == 0) {
+    draw_round_glance(ctx, bounds);
+  } else if (s_page == 1) {
+    draw_round_hf(ctx, bounds);
+  } else if (s_page == 2) {
+    draw_round_solar(ctx, bounds);
+  } else if (s_page == 3) {
+    draw_round_field(ctx, bounds);
+  } else {
+    draw_round_vhf(ctx, bounds);
+  }
+  draw_round_chrome(ctx, bounds);
+#else
   if (!s_solar.have) {
     draw_loading(ctx, bounds);
   } else if (s_page == 0) {
@@ -443,6 +710,7 @@ static void draw_canvas(Layer *layer, GContext *ctx) {
     draw_vhf(ctx, bounds);
   }
   draw_footer(ctx, bounds);
+#endif
 }
 
 static bool parse_buf(char *buf) {
@@ -618,12 +886,12 @@ static void on_pebblekit(bool connected) {
 }
 
 static void up_click(ClickRecognizerRef recognizer, void *context) {
-  s_page = (s_page + 2) % 3;
+  s_page = (s_page + PAGE_COUNT - 1) % PAGE_COUNT;
   layer_mark_dirty(s_canvas);
 }
 
 static void down_click(ClickRecognizerRef recognizer, void *context) {
-  s_page = (s_page + 1) % 3;
+  s_page = (s_page + 1) % PAGE_COUNT;
   layer_mark_dirty(s_canvas);
 }
 
@@ -654,6 +922,10 @@ static void init(void) {
   s_font14 = fonts_get_system_font(FONT_KEY_GOTHIC_14);
   s_font14b = fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD);
   s_font18b = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
+#if defined(PBL_ROUND)
+  s_font24b = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+  s_font28b = fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD);
+#endif
 
   if (persist_exists(PERSIST_RAW)) {
     persist_read_string(PERSIST_RAW, s_raw, sizeof(s_raw));
