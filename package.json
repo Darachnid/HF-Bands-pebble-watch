@@ -1,0 +1,22 @@
+{
+  "name": "hf-bands",
+  "author": "Darachnid",
+  "version": "1.0.0",
+  "keywords": ["pebble-app"],
+  "private": true,
+  "dependencies": {},
+  "pebble": {
+    "displayName": "HF Bands",
+    "uuid": "7bca323a-efcb-4d4d-a2b7-78806fd69b8d",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": ["emery"],
+    "watchapp": {
+      "watchface": false
+    },
+    "messageKeys": ["SOLAR", "REFRESH"],
+    "resources": {
+      "media": []
+    }
+  }
+}
